@@ -1,0 +1,285 @@
+Include %syPrompt
+
+/// Class for Code Snippets
+Class Tools.CodeSnippets Extends %RegisteredObject
+{
+
+/// Method to export Studio's Code Snippets to VSCode's Code Snippets
+/// Studio's Code Snippet are text files located on local hard drive
+/// Tools >> Options >> Environments >> Code Snippet
+/// Snippets Code file is coded as :
+/// Snippet Name _ $char(2) _ Snippet Language ID _ $char(2) _ Snippet Code _ $char(1)
+/// @strINStudioFile Studio Snippets Code file name with full path, leave empty to use prompt
+/// @strINVSCodeFile VSCode Snippets JSON file name with full path, leave empty to use prompt or generate random file name
+/// @strINLanguageType restrict the export for a list of specific languages (ids separated by comma, i.e. "1,2,9"). Leave empty for all Snippets Languages
+/// 		1 : IRIS Object Script
+/// 		2 : SQL
+/// 		3 : Class Definition Language
+/// 		4 : IRIS Basic
+/// 		5 : HTML
+/// 		6 : Unknown
+/// 		7 : User-Defined
+/// 		9 : XML
+/// 		11 : Javascript
+/// 		12 : IRISMVBasic
+/// 		13 : Java
+/// 		14 : TSQL
+/// 		15 : CSS
+/// 		255 : SQL Triggers
+ClassMethod ConvertCodeSnippet(strINStudioFile As %String, strINVSCodeFile As %String, strINLanguageType As %String = "")
+{
+	// call examples:
+	// d ##class(Tools.CodeSnippets).ConvertCodeSnippet()
+	// d ##class(Tools.CodeSnippets).ConvertCodeSnippet("C:\Users\jhuser\Documents\InterSystems\CodeSnippets.txt","C:\Users\jhuser\AppData\Roaming\Code\User\snippets\objectscript.json")
+	// d ##class(Tools.CodeSnippets).ConvertCodeSnippet("C:\Users\jhuser\Documents\InterSystems\CodeSnippets2.txt","C:\Users\jhuser\AppData\Roaming\Code\User\snippets\objectscript2.json","1,2")
+	#dim tSC as %Library.Status = $$$OK
+	#dim sc as %Library.Status = $$$OK
+	#dim excep as %Exception.StatusException
+	#dim FileReader as %Library.File
+	#dim FileWriter as %Library.File
+	#dim objSnippet as %DynamicObject
+	#dim objSnippetContent as %DynamicObject
+	#dim objSnippetBody as %DynamicArray
+	set MyJob = $job
+	set intNbSnippets = 0
+	kill ^TMP("CodeSnippet", MyJob)
+	try {
+		set listSnippetLanguages = ""
+		if strINLanguageType'="" { set listSnippetLanguages = $listfromstring(strINLanguageType, ",") }
+		set strStudioSnippets = $zstrip($get(strINStudioFile),"<>W")
+		if strStudioSnippets="" {
+			set tSC = ##class(%Library.Prompt).GetString("Studio Snippets Code file's name: ", .strStudioSnippets ,,,, $$$TrapCtrlCMask)
+			if $$$ISERR(tSC) {
+				set tSC=$system.Status.AppendStatus($$$ERROR($$$GeneralError,"Prompt Error on input file name"),tSC)
+				quit
+			}
+			if $zstrip(strStudioSnippets,"<>W","")="" {
+				set tSC = $$$ERROR($$$GeneralError, "Studio Snippets Code filename is missing")
+				quit
+			}
+		}
+		set strFileVSCodeJSON = $zstrip($get(strINVSCodeFile),"<>W")
+		if strFileVSCodeJSON="" {
+			set tSC = ##class(%Library.Prompt).GetString("VS Code JSON Snippets file's name: ", .strFileVSCodeJSON ,,,, $$$TrapCtrlCMask)
+			if $$$ISERR(tSC) {
+				set tSC=$system.Status.AppendStatus($$$ERROR($$$GeneralError,"Prompt Error on JSON file name"),tSC)
+				quit
+			}
+			if $zstrip($get(strFileVSCodeJSON),"<>W")="" {
+				set blnValue = $$$OK
+				set tSC = ##class(%Library.Prompt).GetYesNo("Generate VSCode JSON File with random name?", .blnValue,, $$$TrapCtrlCMask)
+				if $$$ISERR(tSC) {
+					set tSC=$system.Status.AppendStatus($$$ERROR($$$GeneralError,"Prompt Error"),tSC)
+					quit
+				}
+				if blnValue { 
+					set strFileVSCodeJSON = ..GenerateFileName("objectscript","JSON") 
+				}
+			}
+			if $zstrip(strFileVSCodeJSON,"<>W","")="" {
+				set tSC = $$$ERROR($$$GeneralError, "VS Code JSON filename is missing")
+				quit
+			}
+		}
+		set tSC = ..CreateFileReader(strStudioSnippets,.FileReader)
+		if $$$ISERR(tSC) { quit }
+		set NewSnippet = $$$OK
+		set (Name,Version,CodeContent) = ""
+		set SnippetNumber = 0
+		while (FileReader.AtEnd = 0)
+		{
+			set len = 32000
+			set (strBuffer, eol) = ""
+			set strBuffer = FileReader.ReadLine(.len, .tSC, .eol)
+			if $$$ISERR(tSC) { quit }
+			continue:strBuffer=""
+			continue:strBuffer=$char(10)
+			if NewSnippet {
+				if $length(strBuffer,$char(2))<2 {
+					set tSC = $$$ERROR($$$GeneralError,$$$FormatText("New Snippet contains no Snippet data: %1",strBuffer))
+					quit
+				}
+				set SnippetNumber = SnippetNumber + 1
+				// $char(2) separator for Snippet name and content
+				set Name = $piece(strBuffer,$char(2),1)
+				set Language = $piece(strBuffer,$char(2),2)
+				set ^TMP("CodeSnippet", MyJob, SnippetNumber, "Name") = Name
+				set ^TMP("CodeSnippet", MyJob, SnippetNumber, "Language") = Language
+				set indexContent = $i(^TMP("CodeSnippet", MyJob, SnippetNumber, "Content"))
+				set strCodeContent = $piece(strBuffer,$char(2),3)
+				if $length(strCodeContent,$char(1))>1 {
+					set strCodeContent = $piece(strCodeContent,$char(1),1)
+					set NewSnippet = $$$OK
+				} else {
+					set NewSnippet = '$$$OK
+				}
+				set ^TMP("CodeSnippet", MyJob, SnippetNumber, "Content", indexContent) = strCodeContent
+				
+			} else {
+				// $char(1) separator for a snippet to another one
+				set indexContent = $i(^TMP("CodeSnippet", MyJob, SnippetNumber, "Content"))
+				set ^TMP("CodeSnippet", MyJob, SnippetNumber, "Content", indexContent) = $piece(strBuffer,$char(1),1)
+				if $length(strBuffer,$char(1))>1 {
+					set NewSnippet = $$$OK
+				}
+			}
+		}
+		if $$$ISERR(tSC) { quit }
+		if $data(^TMP("CodeSnippet", MyJob))=0 {
+			set tSC = $$$ERROR($$$GeneralError,"No Snippet Data")
+			quit
+		}
+		set tSC = ..CreateFileWriter(strFileVSCodeJSON, .FileWriter)
+		if $$$ISERR(tSC) { quit }
+		set objSnippet = {}
+		set SnippetNumber = ""
+		for {
+			set SnippetNumber = $order(^TMP("CodeSnippet", MyJob, SnippetNumber))
+			quit:SnippetNumber=""
+			set strSnippetName = $get(^TMP("CodeSnippet", MyJob, SnippetNumber, "Name"))
+			set strSnippetLanguage = $get(^TMP("CodeSnippet", MyJob, SnippetNumber, "Language"))
+			if ((listSnippetLanguages'="") && ($listvalid(listSnippetLanguages)) &&
+				(strSnippetLanguage'="") && ('$listfind(listSnippetLanguages,strSnippetLanguage))) {
+				 	continue 
+			}
+			set objSnippetContent = {}
+			set objSnippetBody = []
+			set indexContent = ""
+			for {
+				set indexContent = $order(^TMP("CodeSnippet", MyJob, SnippetNumber, "Content", indexContent), 1, CodeContentData)
+				quit:indexContent=""
+				do objSnippetBody.%Push(CodeContentData)
+			}
+			set objSnippetContent.prefix = $zconvert(##Class(%Collation).AlphaUp(strSnippetName),"L")
+			set objSnippetContent.body=objSnippetBody
+			set objSnippetContent.description=strSnippetName
+			do objSnippet.%Set(strSnippetName,objSnippetContent)
+			set intNbSnippets = intNbSnippets + 1
+		}
+		set formatter = ##class(%JSON.Formatter).%New()
+		set tSC = formatter.FormatToStream(objSnippet, .FileWriter)
+		if $$$ISERR(tSC) { quit }
+		write !, $$$FormatText("VSCode JSON File ""%1"" has been generated : %2 Snippets exported",strFileVSCodeJSON,intNbSnippets)
+	} catch (excep) {
+		set tSC = excep.AsStatus()
+	}
+	if $$$ISERR(tSC) {
+		write !, $$$FormatText("An error has occured ==> %1",$system.Status.GetErrorText(tSC)), !
+	}
+	kill ^TMP("CodeSnippet", MyJob)
+	do ..CloseFile(.FileReader)
+	do ..CloseFile(.FileWriter)
+	quit
+}
+
+/// Close a %File
+ClassMethod CloseFile(ByRef fileINFileToClose As %File)
+{
+	if (($data(fileINFileToClose)>0) && (fileINFileToClose'="")) {
+		do fileINFileToClose.Close()
+		set fileINFileToClose = ""
+		kill fileINFileToClose
+	}
+}
+
+/// Create a fileWriter from a file name
+/// @strINFilename = name of the file to write, full path of the file (ie "/tmp/export/jsonCodeSnippet.JSON")
+/// @fwOutFileWriter = %File object of a file to write
+ClassMethod CreateFileWriter(strINFilename As %String, ByRef fwOutFileWriter As %File) As %Status
+{
+	set filename = $get(strINFilename)
+	if $zstrip(filename,"<>W","")="" { quit $$$ERROR($$$GeneralError,"No Input File Name for File Writer") }
+	#dim tSC as %Library.Status = $$$OK
+	#dim excep as %Exception.StatusException
+	#dim file as %Library.File
+	#dim return as %Integer = 0
+	try {
+		set fwOutFileWriter = ##class(%Library.File).%New(filename)
+		set path = fwOutFileWriter.GetDirectory()
+		if '##class(%File).DirectoryExists(path) {
+			set ok = ##class(%File).CreateDirectoryChain(path, .return)
+			if 'ok {
+				set tSC = $$$ERROR($$$GeneralError,$$$FormatText("Error create directory %1 : error code = %2",path,(-return)))
+				quit
+			}
+		}
+		if ##class(%Library.File).Exists(filename) {
+			set ok = ##class(%Library.File).Delete(filename, .return)
+			if 'ok {
+				set tSC = $$$ERROR($$$GeneralError,$$$FormatText("File %2 exists and can not be deleted : error code = %2",filename,(-return)))
+				quit
+			}
+		}
+		do fwOutFileWriter.Open("WNS")
+		set fwOutFileWriter.LineTerminator = $$$NL
+	} catch (excep) {
+		set tSC = excep.AsStatus()
+	}
+	quit tSC
+}
+
+/// Create a file reader from a file name
+/// Use Either full file name (path + file name)
+/// use fileName and path separatly
+/// @strINFilename = name of the file to read, full path of the file (ie "/tmp/import/CodeSnippets.txt")
+ClassMethod CreateFileReader(strINFilename As %String, ByRef fwOutFileReader As %File) As %Status
+{
+	set filename = $get(strINFilename)
+	if $zstrip(filename,"<>W","")="" { quit $$$ERROR($$$GeneralError,"No Input File Name for File Reader") }
+	#dim tSC as %Library.Status = $$$OK
+	#dim sc as %Library.Status = $$$OK
+	#dim excep as %Exception.StatusException
+	try {
+		if ('##class(%File).Exists(filename)) { 
+			set tSC=$$$ERROR($$$GeneralError,$$$FormatText("File %1 does not exist",filename))
+			quit 
+		}
+		set fwOutFileReader = ##class(%Library.File).%New(filename)
+		set tSC = fwOutFileReader.Open("RU:/TRANSLATE=1:/IOTABLE=""UTF8"":/SHARED") // for UTF-8 compatibility 
+		if $$$ISERR(tSC) { quit }
+		// we read the file to detect Carriage Return and/or Line Feed
+		set len = 32000
+		set (strBuffer, eol) = ""
+		set strBuffer = fwOutFileReader.Read(.len, .tSC)
+		if $$$ISERR(tSC) { quit }
+		if (len <= 0) { 
+			set tSC=$$$ERROR($$$GeneralError,$$$FormatText("File %1 is empty nothing to read",filename))
+			quit 
+		}
+		set blnFound = ($find(strBuffer, $$$NL) > 0)
+		set fwOutFileReader.LineTerminator = $case(blnFound,$$$OK:$$$NL,:$char(10))
+		set tSC = fwOutFileReader.Rewind()
+	} catch (excep) {
+		set tSC = excep.AsStatus()
+	}
+	quit tSC
+}
+
+/// Generate a file name from a input string with current date and time
+ClassMethod GenerateFileName(strINText As %String, strINExtension As %String = "TXT") As %String
+{
+	set fileNamePart3 = $get(strINText)
+	set strDirSep = "/"
+	set CurrentTime = $replace($ztime(+$piece($h,",",2),1),":","")
+	set CurrentDate = $zdate(+$h,8)
+	set filename = CurrentDate_"_"_CurrentTime_$select(fileNamePart3'="":"_",1:"")_fileNamePart3_"."_$zconvert(strINExtension,"L")
+	set tempDir = ##class(%SYS.System).TempDirectory()
+	set OSSYS = $zconvert($system.Version.GetCompBuildOS(), "U")
+	if OSSYS = "UNIX" { set strDirSep = "/" }
+	elseif OSSYS = "WINDOWS" { set strDirSep = "\" }
+	else { set strDirSep = "/" }
+ 	if $extract(tempDir, $length(tempDir)) '= tempDir {
+		set tempDir = tempDir _ strDirSep
+	}
+	quit tempDir_filename
+}
+
+/// Add a Directory separator
+ClassMethod AddDirSep(strINDir As %String = "") As %String
+{
+	
+	
+	quit MyDir
+}
+
+}
